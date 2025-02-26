@@ -1,6 +1,6 @@
 obd ~= 0.7.2  # A Python module for handling realtime sensor data from OBD-II vehicle ports.
 pyserial ~= 3.5  # Provides direct serial communication if needed for advanced or manual OBD usage.
 pandas ~= 2.2.3  # Simplifies data manipulation, logging, and CSV generation for recorded trip data.
-numpy < 1.2.4  # Adds efficient array manipulation for calculations or advanced analytics.
+numpy < 1.24  # Adds efficient array manipulation for calculations or advanced analytics.
 requests ~= 2.32.3  # Allows making HTTP requests if you plan to send data to external services or APIs.
 python-json-logger ~= 3.2.1  # Enables easy JSON output for logs, perfect for Splunk ingestion.
