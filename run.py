@@ -3,7 +3,7 @@
 import logging
 from pythonjsonlogger import jsonlogger
 import obd
-from obd import OBDCommand, commands
+from obd import commands
 
 def main():
     # ---------------------------------------------------------
@@ -12,17 +12,17 @@ def main():
     logger = logging.getLogger("obd_logger")
     logger.setLevel(logging.INFO)
 
-    file_handler = logging.FileHandler("pid_check.log")
+    file_handler = logging.FileHandler("app.log")
     formatter = jsonlogger.JsonFormatter()
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    logger.info({"event": "starting_pid_check"})
+    logger.info({"event": "starting_obd_test"})
 
     # ---------------------------------------------------------
     # 2. Connect to OBD-II
     # ---------------------------------------------------------
-    connection = obd.OBD(portstr="/dev/ttyUSB0")
+    connection = obd.OBD(portstr="/dev/ttyUSB0")  # Adjust if needed
     if connection.is_connected():
         logger.info({"event": "connection_success", "message": "OBD-II connected"})
     else:
@@ -30,108 +30,57 @@ def main():
         return
 
     # ---------------------------------------------------------
-    # 3. Full List of Mode 01 PIDs from Official Docs
-    #    (As they appear in python-OBD)
+    # 3. Only Supported PIDs (from pid_check.log)
     # ---------------------------------------------------------
-    # Not all of these might be in python-OBD commands.*,
-    # but we'll list them as an example. Remove or comment out
-    # any that cause AttributeErrors if not implemented.
-    mode_01_commands = [
-        commands.PIDS_A,
-        commands.STATUS,
-        commands.FREEZE_DTC,
-        commands.FUEL_STATUS,
-        commands.ENGINE_LOAD,
-        commands.COOLANT_TEMP,
+    # These PIDs returned valid data for your specific Miata. Feel free to
+    # adjust or add others if you discover more are supported.
+    test_commands = [
+        commands.PIDS_A,          # returns a BitArray of supported PIDs [01-20]
+        commands.STATUS,          # sometimes returns null or a special status
+        commands.FUEL_STATUS,     # string or tuple (e.g. "Open loop")
+        commands.ENGINE_LOAD,     # numeric
+        commands.COOLANT_TEMP,    # numeric
         commands.SHORT_FUEL_TRIM_1,
         commands.LONG_FUEL_TRIM_1,
-        commands.SHORT_FUEL_TRIM_2,
-        commands.LONG_FUEL_TRIM_2,
-        commands.FUEL_PRESSURE,
-        commands.INTAKE_PRESSURE,
-        commands.RPM,
-        commands.SPEED,
-        commands.TIMING_ADVANCE,
-        commands.INTAKE_TEMP,
-        commands.MAF,
-        commands.THROTTLE_POS,
-        commands.AIR_STATUS,
-        commands.O2_SENSORS,
-        commands.O2_B1S1,
-        commands.O2_B1S2,
-        commands.O2_B1S3,
-        commands.O2_B1S4,
-        commands.O2_B2S1,
-        commands.O2_B2S2,
-        commands.O2_B2S3,
-        commands.O2_B2S4,
-        commands.OBD_COMPLIANCE,
-        commands.O2_SENSORS_ALT,
-        commands.AUX_INPUT_STATUS,
-        commands.RUN_TIME,
-        commands.PIDS_B,
-        commands.DISTANCE_W_MIL,
-        commands.FUEL_RAIL_PRESSURE_VAC,
-        commands.FUEL_RAIL_PRESSURE_DIRECT,
-        # Some additional ones if python-OBD supports them:
-        commands.FUEL_LEVEL,
-        commands.ETHANOL_PERCENT,
-        commands.EVAP_VAPOR_PRESSURE_ABS,
-        commands.EVAP_VAPOR_PRESSURE_ALT,
-        commands.OIL_TEMP,
-        commands.FUEL_INJECT_TIMING,
-        # etc. (Add any others from the doc that python-OBD provides)
+        commands.RPM,             # numeric
+        commands.SPEED,           # numeric
+        commands.TIMING_ADVANCE,  # numeric
+        commands.INTAKE_TEMP,     # numeric
+        commands.MAF,             # numeric
+        commands.THROTTLE_POS,    # numeric
+        commands.O2_SENSORS,      # typically a bit array or special structure
+        commands.O2_B1S1,         # numeric (voltage)
+        commands.O2_B1S2,         # numeric (voltage)
+        commands.OBD_COMPLIANCE   # string (e.g. "OBD-II as defined by the CARB")
     ]
 
     # ---------------------------------------------------------
-    # 4. Check & Query Each Command
+    # 4. Query & Collect Data
     # ---------------------------------------------------------
-    results = {}
-    for cmd in mode_01_commands:
-        # Check if the ECU reports this PID as supported
-        if connection.supports(cmd):
-            response = connection.query(cmd)
-            if not response.is_null():
-                # Attempt to handle numeric vs. bit arrays vs. string
-                val = response.value
-                # Some responses (like numeric) have .to_tuple()
-                if hasattr(val, "to_tuple"):
-                    val = val.to_tuple()
-                else:
-                    # Fallback: store string representation for bit arrays / special
-                    val = str(val)
-
-                results[cmd.name] = {
-                    "supported": True,
-                    "raw_value": val
-                }
-            else:
-                # The ECU claims it's supported, but no data returned
-                results[cmd.name] = {
-                    "supported": True,
-                    "raw_value": None
-                }
+    log_data = {}
+    for cmd in test_commands:
+        response = connection.query(cmd)
+        if response.is_null():
+            # ECU returned no data
+            log_data[cmd.name] = None
         else:
-            # Not supported by this vehicle
-            results[cmd.name] = {
-                "supported": False
-            }
-            # Optionally log a warning
-            logger.warning({
-                "event": "unsupported_cmd",
-                "cmd": cmd.name
-            })
+            val = response.value
+            # If the response object has .to_tuple(), it's usually numeric + units
+            if hasattr(val, "to_tuple"):
+                log_data[cmd.name] = val.to_tuple()
+            else:
+                # For bit arrays, strings, or other custom data
+                log_data[cmd.name] = str(val)
 
     # ---------------------------------------------------------
-    # 5. Write a Summary to the Log
+    # 5. Log a Snapshot of All Data
     # ---------------------------------------------------------
-    # You can log in bulk, or just log each command in the loop above.
     logger.info({
-        "event": "pid_check_summary",
-        "results": results
+        "event": "obd_snapshot",
+        "data": log_data
     })
 
-    logger.info({"event": "finished_pid_check"})
+    logger.info({"event": "finished_obd_test"})
 
 
 if __name__ == "__main__":
