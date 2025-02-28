@@ -2,7 +2,7 @@
 
 import time
 import logging
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter  # <-- updated import here
 import obd
 from obd import commands
 
@@ -14,7 +14,7 @@ logger.setLevel(logging.INFO)
 
 file_handler = logging.FileHandler("app.log")
 # No 'json_indent' => single-line JSON
-formatter = jsonlogger.JsonFormatter()
+formatter = JsonFormatter()  # use the class from pythonjsonlogger.json
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
@@ -47,7 +47,6 @@ def main():
 
     ############################################################################
     # 1) STATIC (SYNCHRONOUS) QUERIES (OPTIONAL)
-    #    Demonstrates a single pass of known PIDs before we move to Async.
     ############################################################################
     static_commands = [
         commands.ENGINE_LOAD,
@@ -59,10 +58,11 @@ def main():
         commands.THROTTLE_POS
     ]
 
+    # Build a standard OBD connection for the static snapshot
     connection = obd.OBD(
         portstr="/dev/ttyUSB0",
-        fast=False,       # be conservative for reliability
-        timeout=1.0       # in case the ECU is slow
+        fast=False,
+        timeout=1.0
     )
     if connection.is_connected():
         logger.info({"event": "connection_success", "message": "OBD-II connected (static)"})
@@ -72,7 +72,7 @@ def main():
 
     static_data = {}
     for cmd in static_commands:
-        if connection.supports_command(cmd):
+        if connection.supported_commands(cmd):
             resp = connection.query(cmd)
             if resp.is_null():
                 static_data[cmd.name] = None
@@ -84,17 +84,18 @@ def main():
                     val = str(val)
                 static_data[cmd.name] = val
         else:
-            static_data[cmd.name] = None  # or "unsupported"
+            static_data[cmd.name] = None
 
     logger.info({"event": "static_obd_snapshot", "data": static_data})
 
-    connection.close()  # close the static connection
+    # Close the static connection
+    connection.close()
 
-    # Wait a moment so the ELM327 can reset/settle
+    # Give the adapter time to reset before opening Async
     time.sleep(2)
 
     ############################################################################
-    # 2) ASYNC TEST for 60 SECONDS
+    # 2) ASYNC TEST (RUNS FOR 60 SECONDS)
     ############################################################################
     async_cmds = [
         commands.ENGINE_LOAD,
@@ -106,11 +107,11 @@ def main():
         commands.THROTTLE_POS
     ]
 
-    # Build the Async connection with recommended parameters
+    # Create Async OBD connection with recommended parameters
     async_connection = obd.Async(
         portstr="/dev/ttyUSB0",
-        fast=False,       # avoid "fast" mode for flaky ELM clones or slower ECUs
-        timeout=1.0,      # give enough time for ECU to respond
+        fast=False,       # don't use "fast" mode
+        timeout=1.0,      # allow more time for slow ECUs
         delay_cmds=0.5    # add a delay between command loops
     )
 
@@ -120,10 +121,8 @@ def main():
 
     logger.info({"event": "connection_success", "message": "OBD-II connected (async)"})
 
-    # Must pause the loop before watch() calls
     with async_connection.paused():
         for cmd in async_cmds:
-            # Only watch if the ECU actually supports the command:
             if async_connection.supports_command(cmd):
                 async_connection.watch(cmd, callback=async_callback)
             else:
@@ -132,16 +131,15 @@ def main():
     # Start the async loop
     async_connection.start()
 
-    MAX_RUNTIME = 60  # seconds
+    max_runtime = 60  # seconds
     start_time = time.time()
 
     try:
         while True:
             elapsed = time.time() - start_time
-            if elapsed >= MAX_RUNTIME:
+            if elapsed >= max_runtime:
                 logger.info({"event": "async_test_ended", "elapsed_seconds": elapsed})
                 break
-            # Sleep briefly to avoid hammering the CPU
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info({"event": "shutdown_requested"})
