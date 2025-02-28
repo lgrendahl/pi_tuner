@@ -46,9 +46,9 @@ def main():
     logger.info({"event": "starting_obd_test"})
 
     ############################################################################
-    # 1) STATIC (SYNCHRONOUS) QUERIES
+    # 1) STATIC (SYNCHRONOUS) QUERIES (OPTIONAL)
+    #    Demonstrates a single pass of known PIDs before we move to Async.
     ############################################################################
-    # Confirmed Working Commands (from prior tests)
     static_commands = [
         commands.ENGINE_LOAD,
         commands.COOLANT_TEMP,
@@ -56,18 +56,14 @@ def main():
         commands.SPEED,
         commands.INTAKE_TEMP,
         commands.MAF,
-        commands.THROTTLE_POS,
-        commands.FUEL_STATUS,
-        commands.SHORT_FUEL_TRIM_1,
-        commands.LONG_FUEL_TRIM_1,
-        commands.TIMING_ADVANCE,
-        commands.O2_SENSORS,
-        commands.O2_B1S1,
-        commands.O2_B1S2,
-        commands.OBD_COMPLIANCE
+        commands.THROTTLE_POS
     ]
 
-    connection = obd.OBD(portstr="/dev/ttyUSB0")
+    connection = obd.OBD(
+        portstr="/dev/ttyUSB0",
+        fast=False,       # be conservative for reliability
+        timeout=1.0       # in case the ECU is slow
+    )
     if connection.is_connected():
         logger.info({"event": "connection_success", "message": "OBD-II connected (static)"})
     else:
@@ -76,25 +72,30 @@ def main():
 
     static_data = {}
     for cmd in static_commands:
-        resp = connection.query(cmd)
-        if resp.is_null():
-            static_data[cmd.name] = None
-        else:
-            val = resp.value
-            if hasattr(val, "to_tuple"):
-                val = val.to_tuple()
+        if connection.supports_command(cmd):
+            resp = connection.query(cmd)
+            if resp.is_null():
+                static_data[cmd.name] = None
             else:
-                val = str(val)
-            static_data[cmd.name] = val
+                val = resp.value
+                if hasattr(val, "to_tuple"):
+                    val = val.to_tuple()
+                else:
+                    val = str(val)
+                static_data[cmd.name] = val
+        else:
+            static_data[cmd.name] = None  # or "unsupported"
 
     logger.info({"event": "static_obd_snapshot", "data": static_data})
 
     connection.close()  # close the static connection
 
+    # Wait a moment so the ELM327 can reset/settle
+    time.sleep(2)
+
     ############################################################################
-    # 2) ASYNC TEST for 30 SECONDS
+    # 2) ASYNC TEST for 60 SECONDS
     ############################################################################
-    # Only the commands you want real-time
     async_cmds = [
         commands.ENGINE_LOAD,
         commands.COOLANT_TEMP,
@@ -105,7 +106,14 @@ def main():
         commands.THROTTLE_POS
     ]
 
-    async_connection = obd.Async(portstr="/dev/ttyUSB0")
+    # Build the Async connection with recommended parameters
+    async_connection = obd.Async(
+        portstr="/dev/ttyUSB0",
+        fast=False,       # avoid "fast" mode for flaky ELM clones or slower ECUs
+        timeout=1.0,      # give enough time for ECU to respond
+        delay_cmds=0.5    # add a delay between command loops
+    )
+
     if not async_connection.is_connected():
         logger.error({"event": "connection_failure", "message": "Could not connect (async)"})
         return
@@ -115,13 +123,16 @@ def main():
     # Must pause the loop before watch() calls
     with async_connection.paused():
         for cmd in async_cmds:
-            # force=True if you want to query even if the ECU doesn't list them
-            async_connection.watch(cmd, callback=async_callback, force=True)
+            # Only watch if the ECU actually supports the command:
+            if async_connection.supports_command(cmd):
+                async_connection.watch(cmd, callback=async_callback)
+            else:
+                logger.info({"event": "unsupported_command", "command": cmd.name})
 
-    # Start the async loop, default interval
+    # Start the async loop
     async_connection.start()
 
-    MAX_RUNTIME = 30  # seconds
+    MAX_RUNTIME = 60  # seconds
     start_time = time.time()
 
     try:
@@ -130,6 +141,7 @@ def main():
             if elapsed >= MAX_RUNTIME:
                 logger.info({"event": "async_test_ended", "elapsed_seconds": elapsed})
                 break
+            # Sleep briefly to avoid hammering the CPU
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info({"event": "shutdown_requested"})
