@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-import obd
 import logging
 from pythonjsonlogger import jsonlogger
+import obd
+from obd import OBDCommand, commands
 
 def main():
     # ---------------------------------------------------------
@@ -11,20 +12,17 @@ def main():
     logger = logging.getLogger("obd_logger")
     logger.setLevel(logging.INFO)
 
-    # Log to a file named app.log (adjust path if you prefer)
-    file_handler = logging.FileHandler("app.log")
+    file_handler = logging.FileHandler("pid_check.log")
     formatter = jsonlogger.JsonFormatter()
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    logger.info({"event": "starting_obd_test"})
+    logger.info({"event": "starting_pid_check"})
 
     # ---------------------------------------------------------
     # 2. Connect to OBD-II
     # ---------------------------------------------------------
-    # Adjust 'portstr' to match the actual device name, e.g. /dev/ttyUSB0 or /dev/ttyACM0
     connection = obd.OBD(portstr="/dev/ttyUSB0")
-
     if connection.is_connected():
         logger.info({"event": "connection_success", "message": "OBD-II connected"})
     else:
@@ -32,69 +30,109 @@ def main():
         return
 
     # ---------------------------------------------------------
-    # 3. Query Some Common PIDs
+    # 3. Full List of Mode 01 PIDs from Official Docs
+    #    (As they appear in python-OBD)
     # ---------------------------------------------------------
-    # Typically, older cars might not support all PIDs. Test a few basics first.
-    test_commands = [obd.commands.RPM,
-                     obd.commands.SPEED,
-                     obd.commands.COOLANT_TEMP,
-                     obd.commands.PIDS_A,
-                     obd.commands.STATUS,
-                     obd.commands.FREEZE_DTC,
-                     obd.commands.FUEL_STATUS,
-                     obd.commands.ENGINE_LOAD,
-                     obd.commands.COOLANT_TEMP,
-                     obd.commands.SHORT_FUEL_TRIM_1,
-                     obd.commands.LONG_FUEL_TRIM_1,
-                     obd.commands.SHORT_FUEL_TRIM_2,
-                     obd.commands.LONG_FUEL_TRIM_2,
-                     obd.commands.FUEL_PRESSURE,
-                     obd.commands.INTAKE_PRESSURE,
-                     obd.commands.RPM,
-                     obd.commands.SPEED,
-                     obd.commands.TIMING_ADVANCE,
-                     obd.commands.INTAKE_TEMP,
-                     obd.commands.MAF,
-                     obd.commands.THROTTLE_POS,
-                     obd.commands.AIR_STATUS,
-                     obd.commands.O2_SENSORS,
-                     obd.commands.O2_B1S1,
-                     obd.commands.O2_B1S2,
-                     obd.commands.O2_B1S3,
-                     obd.commands.O2_B1S4,
-                     obd.commands.O2_B2S1,
-                     obd.commands.O2_B2S2,
-                     obd.commands.O2_B2S3,
-                     obd.commands.O2_B2S4,
-                     obd.commands.OBD_COMPLIANCE,
-                     obd.commands.O2_SENSORS_ALT,
-                     obd.commands.AUX_INPUT_STATUS,
-                     obd.commands.RUN_TIME,
-                     obd.commands.PIDS_B,
-                     obd.commands.DISTANCE_W_MIL,
-                     obd.commands.FUEL_RAIL_PRESSURE_VAC,
-                     obd.commands.FUEL_RAIL_PRESSURE_DIRECT,
-                     obd.commands.FUEL_LEVEL,
-                     obd.commands.ETHANOL_PERCENT,
-                     obd.commands.EVAP_VAPOR_PRESSURE_ABS,
-                     obd.commands.EVAP_VAPOR_PRESSURE_ALT,
-                     obd.commands.OIL_TEMP,
-                     obd.commands.FUEL_INJECT_TIMING]
+    # Not all of these might be in python-OBD commands.*,
+    # but we'll list them as an example. Remove or comment out
+    # any that cause AttributeErrors if not implemented.
+    mode_01_commands = [
+        commands.PIDS_A,
+        commands.STATUS,
+        commands.FREEZE_DTC,
+        commands.FUEL_STATUS,
+        commands.ENGINE_LOAD,
+        commands.COOLANT_TEMP,
+        commands.SHORT_FUEL_TRIM_1,
+        commands.LONG_FUEL_TRIM_1,
+        commands.SHORT_FUEL_TRIM_2,
+        commands.LONG_FUEL_TRIM_2,
+        commands.FUEL_PRESSURE,
+        commands.INTAKE_PRESSURE,
+        commands.RPM,
+        commands.SPEED,
+        commands.TIMING_ADVANCE,
+        commands.INTAKE_TEMP,
+        commands.MAF,
+        commands.THROTTLE_POS,
+        commands.AIR_STATUS,
+        commands.O2_SENSORS,
+        commands.O2_B1S1,
+        commands.O2_B1S2,
+        commands.O2_B1S3,
+        commands.O2_B1S4,
+        commands.O2_B2S1,
+        commands.O2_B2S2,
+        commands.O2_B2S3,
+        commands.O2_B2S4,
+        commands.OBD_COMPLIANCE,
+        commands.O2_SENSORS_ALT,
+        commands.AUX_INPUT_STATUS,
+        commands.RUN_TIME,
+        commands.PIDS_B,
+        commands.DISTANCE_W_MIL,
+        commands.FUEL_RAIL_PRESSURE_VAC,
+        commands.FUEL_RAIL_PRESSURE_DIRECT,
+        # Some additional ones if python-OBD supports them:
+        commands.FUEL_LEVEL,
+        commands.ETHANOL_PERCENT,
+        commands.EVAP_VAPOR_PRESSURE_ABS,
+        commands.EVAP_VAPOR_PRESSURE_ALT,
+        commands.OIL_TEMP,
+        commands.FUEL_INJECT_TIMING,
+        # etc. (Add any others from the doc that python-OBD provides)
+    ]
 
-    # Collect a single snapshot to keep it simple
-    log_data = {}
-    for cmd in test_commands:
-        response = connection.query(cmd)
-        # Convert command name and response value to JSON-friendly format
-        log_data[cmd.name] = response.value.to_tuple() if not response.is_null() else None
+    # ---------------------------------------------------------
+    # 4. Check & Query Each Command
+    # ---------------------------------------------------------
+    results = {}
+    for cmd in mode_01_commands:
+        # Check if the ECU reports this PID as supported
+        if connection.supports(cmd):
+            response = connection.query(cmd)
+            if not response.is_null():
+                # Attempt to handle numeric vs. bit arrays vs. string
+                val = response.value
+                # Some responses (like numeric) have .to_tuple()
+                if hasattr(val, "to_tuple"):
+                    val = val.to_tuple()
+                else:
+                    # Fallback: store string representation for bit arrays / special
+                    val = str(val)
 
-    # Log the data in JSON format
+                results[cmd.name] = {
+                    "supported": True,
+                    "raw_value": val
+                }
+            else:
+                # The ECU claims it's supported, but no data returned
+                results[cmd.name] = {
+                    "supported": True,
+                    "raw_value": None
+                }
+        else:
+            # Not supported by this vehicle
+            results[cmd.name] = {
+                "supported": False
+            }
+            # Optionally log a warning
+            logger.warning({
+                "event": "unsupported_cmd",
+                "cmd": cmd.name
+            })
+
+    # ---------------------------------------------------------
+    # 5. Write a Summary to the Log
+    # ---------------------------------------------------------
+    # You can log in bulk, or just log each command in the loop above.
     logger.info({
-        "event": "obd_snapshot",
-        "data": log_data
+        "event": "pid_check_summary",
+        "results": results
     })
 
-    logger.info({"event": "finished_obd_test"})
+    logger.info({"event": "finished_pid_check"})
+
 
 if __name__ == "__main__":
     main()
