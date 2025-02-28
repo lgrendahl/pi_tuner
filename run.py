@@ -7,13 +7,16 @@ from obd import commands
 
 def main():
     # ---------------------------------------------------------
-    # 1. Configure JSON Logger
+    # 1. Configure JSON Logger (with 2-space indentation)
     # ---------------------------------------------------------
     logger = logging.getLogger("obd_logger")
     logger.setLevel(logging.INFO)
 
+    # Create a FileHandler
     file_handler = logging.FileHandler("app.log")
-    formatter = jsonlogger.JsonFormatter()
+
+    # jsonlogger.JsonFormatter supports indentation via "json_indent"
+    formatter = jsonlogger.JsonFormatter(json_indent=2)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
@@ -30,28 +33,26 @@ def main():
         return
 
     # ---------------------------------------------------------
-    # 3. Only Supported PIDs (from pid_check.log)
+    # 3. Only Supported PIDs (from your previous pid_check)
     # ---------------------------------------------------------
-    # These PIDs returned valid data for your specific Miata. Feel free to
-    # adjust or add others if you discover more are supported.
     test_commands = [
-        commands.PIDS_A,          # returns a BitArray of supported PIDs [01-20]
-        commands.STATUS,          # sometimes returns null or a special status
-        commands.FUEL_STATUS,     # string or tuple (e.g. "Open loop")
-        commands.ENGINE_LOAD,     # numeric
-        commands.COOLANT_TEMP,    # numeric
+        commands.PIDS_A,
+        commands.STATUS,
+        commands.FUEL_STATUS,
+        commands.ENGINE_LOAD,
+        commands.COOLANT_TEMP,
         commands.SHORT_FUEL_TRIM_1,
         commands.LONG_FUEL_TRIM_1,
-        commands.RPM,             # numeric
-        commands.SPEED,           # numeric
-        commands.TIMING_ADVANCE,  # numeric
-        commands.INTAKE_TEMP,     # numeric
-        commands.MAF,             # numeric
-        commands.THROTTLE_POS,    # numeric
-        commands.O2_SENSORS,      # typically a bit array or special structure
-        commands.O2_B1S1,         # numeric (voltage)
-        commands.O2_B1S2,         # numeric (voltage)
-        commands.OBD_COMPLIANCE   # string (e.g. "OBD-II as defined by the CARB")
+        commands.RPM,
+        commands.SPEED,
+        commands.TIMING_ADVANCE,
+        commands.INTAKE_TEMP,
+        commands.MAF,
+        commands.THROTTLE_POS,
+        commands.O2_SENSORS,
+        commands.O2_B1S1,
+        commands.O2_B1S2,
+        commands.OBD_COMPLIANCE
     ]
 
     # ---------------------------------------------------------
@@ -73,7 +74,7 @@ def main():
                 log_data[cmd.name] = str(val)
 
     # ---------------------------------------------------------
-    # 5. Log a Snapshot of All Data
+    # 5. Log a Pretty-Printed Snapshot of All Data
     # ---------------------------------------------------------
     logger.info({
         "event": "obd_snapshot",
