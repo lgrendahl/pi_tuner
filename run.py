@@ -123,7 +123,7 @@ def main():
 
     with async_connection.paused():
         for cmd in async_cmds:
-            if async_connection.supports_command(cmd):
+            if async_connection.supported_commands(cmd):
                 async_connection.watch(cmd, callback=async_callback)
             else:
                 logger.info({"event": "unsupported_command", "command": cmd.name})
