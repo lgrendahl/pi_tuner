@@ -2,7 +2,7 @@
 
 import time
 import logging
-from pythonjsonlogger.json import JsonFormatter  # <-- updated import here
+from pythonjsonlogger.json import JsonFormatter
 import obd
 from obd import commands
 
@@ -13,8 +13,7 @@ logger = logging.getLogger("obd_logger")
 logger.setLevel(logging.INFO)
 
 file_handler = logging.FileHandler("app.log")
-# No 'json_indent' => single-line JSON
-formatter = JsonFormatter()  # use the class from pythonjsonlogger.json
+formatter = JsonFormatter()  # from pythonjsonlogger.json
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
@@ -46,7 +45,7 @@ def main():
     logger.info({"event": "starting_obd_test"})
 
     ############################################################################
-    # 1) STATIC (SYNCHRONOUS) QUERIES (OPTIONAL)
+    # 1) STATIC (SYNCHRONOUS) QUERIES
     ############################################################################
     static_commands = [
         commands.ENGINE_LOAD,
@@ -58,12 +57,8 @@ def main():
         commands.THROTTLE_POS
     ]
 
-    # Build a standard OBD connection for the static snapshot
-    connection = obd.OBD(
-        portstr="/dev/ttyUSB0",
-        fast=False,
-        timeout=1.0
-    )
+    connection = obd.OBD(portstr="/dev/ttyUSB0", fast=False, timeout=1.0)
+
     if connection.is_connected():
         logger.info({"event": "connection_success", "message": "OBD-II connected (static)"})
     else:
@@ -71,8 +66,9 @@ def main():
         return
 
     static_data = {}
+    # Use membership check: if cmd in connection.supported_commands
     for cmd in static_commands:
-        if connection.supported_commands(cmd):
+        if cmd in connection.supported_commands:
             resp = connection.query(cmd)
             if resp.is_null():
                 static_data[cmd.name] = None
@@ -88,11 +84,8 @@ def main():
 
     logger.info({"event": "static_obd_snapshot", "data": static_data})
 
-    # Close the static connection
     connection.close()
-
-    # Give the adapter time to reset before opening Async
-    time.sleep(2)
+    time.sleep(2)  # Give adapter a moment to reset
 
     ############################################################################
     # 2) ASYNC TEST (RUNS FOR 60 SECONDS)
@@ -110,9 +103,9 @@ def main():
     # Create Async OBD connection with recommended parameters
     async_connection = obd.Async(
         portstr="/dev/ttyUSB0",
-        fast=False,       # don't use "fast" mode
-        timeout=1.0,      # allow more time for slow ECUs
-        delay_cmds=0.5    # add a delay between command loops
+        fast=False,
+        timeout=1.0,
+        delay_cmds=0.5
     )
 
     if not async_connection.is_connected():
@@ -121,9 +114,10 @@ def main():
 
     logger.info({"event": "connection_success", "message": "OBD-II connected (async)"})
 
+    # Pause the update loop before watch() calls
     with async_connection.paused():
         for cmd in async_cmds:
-            if async_connection.supported_commands(cmd):
+            if cmd in async_connection.supported_commands:
                 async_connection.watch(cmd, callback=async_callback)
             else:
                 logger.info({"event": "unsupported_command", "command": cmd.name})
@@ -131,7 +125,7 @@ def main():
     # Start the async loop
     async_connection.start()
 
-    max_runtime = 60  # seconds
+    max_runtime = 60
     start_time = time.time()
 
     try:
