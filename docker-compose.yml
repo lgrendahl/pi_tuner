@@ -12,15 +12,14 @@ services:
     devices:
       - /dev/ttyUSB0:/dev/ttyUSB0
 
-    # If you need privileged access to the serial device, uncomment:
-    # privileged: true
-
     environment:
       - INFLUX_URL=http://influxdb:8086
       - INFLUX_TOKEN=my-token
       - INFLUX_ORG=my-org
       - INFLUX_BUCKET=obd_data
-      # If your script relies on other env vars, define them here
+
+    volumes:
+      - .:/app
 
     # Ensure the app starts after Influx is ready
     depends_on:
