@@ -85,7 +85,7 @@ def main():
     logger.info({"event": "static_obd_snapshot", "data": static_data})
 
     connection.close()
-    time.sleep(0.03125)  # Give adapter a moment to reset
+    time.sleep(0.015625)  # Give adapter a moment to reset
 
     ############################################################################
     # 2) ASYNC TEST (RUNS FOR 60 SECONDS)
@@ -104,8 +104,8 @@ def main():
     async_connection = obd.Async(
         portstr="/dev/ttyUSB0",
         fast=False,
-        timeout=0.015625,
-        delay_cmds=0.0078125
+        timeout=0.0078125,
+        delay_cmds=0.00390625
     )
 
     if not async_connection.is_connected():
