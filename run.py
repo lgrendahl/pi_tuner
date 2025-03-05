@@ -125,7 +125,7 @@ def main():
     # Start the async loop
     async_connection.start()
 
-    max_runtime = 60
+    max_runtime = 600
     start_time = time.time()
 
     try:
