@@ -3,7 +3,7 @@ FROM python:3.11-bookworm
 
 # 1) Create a non-root user with UID=1000 and GID=1000
 RUN groupadd --gid 1000 obd-user && \
-    useradd --uid 1000 --gid 1000 --create-home obd-user \
+    useradd --uid 1000 --gid 1000 --create-home obd-user && \
     usermod -aG plugdev obd-user
 
 # 2) Set the working directory
