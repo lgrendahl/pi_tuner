@@ -7,11 +7,11 @@ from pythonjsonlogger.json import JsonFormatter
 import obd
 from obd import commands
 
-# InfluxDB client (if you're writing to Influx)
+# Optional: for storing data in InfluxDB
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 
 ###############################################################################
-# CONFIGURE LOGGER (prints JSON to stdout)
+# CONFIGURE LOGGER (Printing JSON to stdout)
 ###############################################################################
 logger = logging.getLogger("obd_logger")
 logger.setLevel(logging.INFO)
@@ -22,7 +22,7 @@ stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 
 ###############################################################################
-# INFLUX CONFIG & CLIENT (if needed)
+# INFLUX CONFIG
 ###############################################################################
 INFLUX_URL = os.environ.get("INFLUX_URL", "http://influxdb:8086")
 INFLUX_TOKEN = os.environ.get("INFLUX_TOKEN", "my-token")
@@ -44,45 +44,12 @@ def write_influx(measurement, fields, tags=None):
     write_api.write(bucket=INFLUX_BUCKET, record=point, write_precision=WritePrecision.NS)
 
 ###############################################################################
-# CAR-STOP DETECTION LOGIC
-###############################################################################
-ZERO_RPM_THRESHOLD = 30  # how many consecutive zero-RPM snapshots = "stopped"
-zero_rpm_count = 0
-car_stopped = False
-
-def check_if_engine_off(cmd, val_tuple):
-    """
-    If `cmd` is RPM and val_tuple[0] is near zero for many snapshots in a row,
-    we consider the engine off. Returns True if we should stop the app.
-    """
-    global zero_rpm_count, car_stopped
-
-    # Only track if cmd == "RPM" and we have a numeric value
-    if cmd == "RPM" and isinstance(val_tuple, tuple):
-        numeric_value = val_tuple[0]
-        # If numeric_value is "small enough" to consider 0 (some cars idle ~700-800)
-        # We'll treat anything < 10 as effectively 0.
-        if numeric_value is not None and numeric_value < 10:
-            zero_rpm_count += 1
-        else:
-            zero_rpm_count = 0
-
-    # If we exceed consecutive threshold, we'll consider the engine off
-    if zero_rpm_count >= ZERO_RPM_THRESHOLD:
-        car_stopped = True
-        logger.info({"event": "car_stopped", "reason": "rpm_zero_threshold_reached"})
-        return True
-
-    return False
-
-###############################################################################
 # ASYNC CALLBACK
 ###############################################################################
 def async_callback(response):
     """
-    Logs each new async reading (continuously).
-    If the response is null, logs None.
-    Also attempts to detect if the engine is off.
+    Logs each new async reading. If the response is null, logs None.
+    Also writes data to Influx if you'd like.
     """
     cmd_name = response.command.name if response.command else "UnknownCommand"
     if response.is_null():
@@ -91,34 +58,24 @@ def async_callback(response):
 
     val = response.value
     if hasattr(val, "to_tuple"):
-        val_tuple = val.to_tuple()  # e.g. (rpm_value, [["revolutions_per_minute", 1]])
+        val_tuple = val.to_tuple()
         logger.info({"event": "async_snapshot", "command": cmd_name, "value": val_tuple})
 
-        # Optionally write to Influx
-        if len(val_tuple) > 0:
-            numeric_value = val_tuple[0]
-            # Attempt to parse the unit
-            unit = None
-            if len(val_tuple) > 1 and val_tuple[1]:
-                if len(val_tuple[1][0]) > 0:
-                    unit = val_tuple[1][0][0]
-            fields = {"value": numeric_value}
-            if unit:
-                fields["unit"] = unit
-            tags = {"command": cmd_name}
-            write_influx("obd_async", fields, tags)
-
-        # Check if engine is off
-        if check_if_engine_off(cmd_name, val_tuple):
-            # If engine is considered off, we can signal the main loop to exit
-            # (We won't explicitly stop the async loop here, the main loop will handle it)
-            pass
-
+        # Example: write numeric + unit to Influx
+        numeric_value = val_tuple[0]
+        unit = None
+        if len(val_tuple) > 1 and val_tuple[1]:
+            if len(val_tuple[1][0]) > 0:
+                unit = val_tuple[1][0][0]
+        fields = {"value": numeric_value}
+        if unit:
+            fields["unit"] = unit
+        tags = {"command": cmd_name}
+        write_influx("obd_async", fields, tags)
     else:
-        # It's a string or something else
         val_str = str(val)
         logger.info({"event": "async_snapshot", "command": cmd_name, "value": val_str})
-        # Influx write as string (optional):
+        # If storing strings:
         fields = {"value_str": val_str}
         tags = {"command": cmd_name}
         write_influx("obd_async", fields, tags)
@@ -127,11 +84,8 @@ def async_callback(response):
 # MAIN SCRIPT
 ###############################################################################
 def main():
-    logger.info({"event": "starting_obd_test"})
+    logger.info({"event": "startup", "message": "OBD app launched. Will run continuously."})
 
-    ############################################################################
-    # 1) STATIC (SYNCHRONOUS) QUERIES
-    ############################################################################
     static_commands = [
         commands.ENGINE_LOAD,
         commands.COOLANT_TEMP,
@@ -141,104 +95,123 @@ def main():
         commands.MAF,
         commands.THROTTLE_POS
     ]
+    async_commands = static_commands  # same set, or you can change
 
-    connection = obd.OBD(portstr="/dev/ttyUSB0", fast=False, timeout=1.0)
+    # Outer loop: keep trying to connect forever
+    while True:
+        try:
+            # 1) Try to connect (blocking)
+            logger.info({"event": "attempt_connection", "message": "Trying to connect to OBD..."})
+            connection = obd.OBD(portstr="/dev/ttyUSB0", fast=False, timeout=1.0)
+            if not connection.is_connected():
+                logger.error({
+                    "event": "connection_failure",
+                    "message": "Could not connect (static). Will retry."
+                })
+                connection.close()
+                time.sleep(5)
+                continue  # go back to while True to try again
 
-    if connection.is_connected():
-        logger.info({"event": "connection_success", "message": "OBD-II connected (static)"})
-    else:
-        logger.error({"event": "connection_failure", "message": "Could not connect (static)"})
-        return
+            logger.info({"event": "connection_success", "message": "OBD-II connected (static)"})
 
-    # Gather static data
-    static_data = {}
-    for cmd in static_commands:
-        if cmd in connection.supported_commands:
-            resp = connection.query(cmd)
-            if resp.is_null():
-                static_data[cmd.name] = None
-            else:
-                val = resp.value
-                if hasattr(val, "to_tuple"):
-                    val = val.to_tuple()
+            # 2) STATIC QUERIES
+            static_data = {}
+            for cmd in static_commands:
+                if cmd in connection.supported_commands:
+                    resp = connection.query(cmd)
+                    if resp.is_null():
+                        static_data[cmd.name] = None
+                    else:
+                        val = resp.value
+                        if hasattr(val, "to_tuple"):
+                            val = val.to_tuple()
+                        else:
+                            val = str(val)
+                        static_data[cmd.name] = val
                 else:
-                    val = str(val)
-                static_data[cmd.name] = val
-        else:
-            static_data[cmd.name] = None
+                    static_data[cmd.name] = None
 
-    logger.info({"event": "static_obd_snapshot", "data": static_data})
-    # Optionally write static data to Influx
-    fields_to_write = {}
-    for k, v in static_data.items():
-        if v is None:
-            continue
-        if isinstance(v, tuple):
-            numeric_value = v[0]
-            unit = None
-            if len(v) > 1 and v[1]:
-                if len(v[1][0]) > 0:
-                    unit = v[1][0][0]
-            fields_to_write[k] = numeric_value
-            if unit:
-                fields_to_write[k + "_unit"] = unit
-        else:
-            fields_to_write[k + "_str"] = v
-    if fields_to_write:
-        write_influx("obd_static", fields_to_write)
+            logger.info({"event": "static_obd_snapshot", "data": static_data})
 
-    connection.close()
-    time.sleep(0.03125)
+            # Write static to Influx
+            fields = {}
+            for k, v in static_data.items():
+                if v is None:
+                    continue
+                if isinstance(v, tuple):
+                    numeric_value = v[0]
+                    unit = None
+                    if len(v) > 1 and v[1]:
+                        if len(v[1][0]) > 0:
+                            unit = v[1][0][0]
+                    fields[k] = numeric_value
+                    if unit:
+                        fields[k + "_unit"] = unit
+                else:
+                    fields[k + "_str"] = v
+            if fields:
+                write_influx("obd_static", fields)
 
-    ############################################################################
-    # 2) ASYNC (RUNS CONTINUOUSLY UNTIL CAR STOPS OR Ctrl+C)
-    ############################################################################
-    async_cmds = [
-        commands.ENGINE_LOAD,
-        commands.COOLANT_TEMP,
-        commands.RPM,
-        commands.SPEED,
-        commands.INTAKE_TEMP,
-        commands.MAF,
-        commands.THROTTLE_POS
-    ]
+            connection.close()
+            time.sleep(0.03125)  # small delay for adapter
 
-    async_connection = obd.Async(
-        portstr="/dev/ttyUSB0",
-        fast=False,
-        timeout=0.015625,
-        delay_cmds=0.0078125
-    )
+            # 3) ASYNC connection
+            async_connection = obd.Async(
+                portstr="/dev/ttyUSB0",
+                fast=False,
+                timeout=0.015625,
+                delay_cmds=0.0078125
+            )
+            if not async_connection.is_connected():
+                logger.error({
+                    "event": "connection_failure",
+                    "message": "Could not connect (async). Will retry."
+                })
+                async_connection.close()
+                time.sleep(5)
+                continue
 
-    if not async_connection.is_connected():
-        logger.error({"event": "connection_failure", "message": "Could not connect (async)"})
-        return
+            logger.info({"event": "connection_success", "message": "OBD-II connected (async)"})
 
-    logger.info({"event": "connection_success", "message": "OBD-II connected (async)"})
+            with async_connection.paused():
+                for cmd in async_commands:
+                    if cmd in async_connection.supported_commands:
+                        async_connection.watch(cmd, callback=async_callback)
+                    else:
+                        logger.info({"event": "unsupported_command", "command": cmd.name})
 
-    with async_connection.paused():
-        for cmd in async_cmds:
-            if cmd in async_connection.supported_commands:
-                async_connection.watch(cmd, callback=async_callback)
-            else:
-                logger.info({"event": "unsupported_command", "command": cmd.name})
+            async_connection.start()
 
-    async_connection.start()
+            logger.info({"event": "async_loop_started", "message": "OBD reading indefinitely..."})
 
-    # Main loop: run until we decide the car is off (car_stopped) or Ctrl+C
-    try:
-        while True:
-            if car_stopped:
-                logger.info({"event": "exiting", "reason": "car_stopped"})
-                break
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info({"event": "shutdown_requested"})
-    finally:
-        async_connection.stop()
-        logger.info({"event": "async_connection_stopped"})
+            # 4) Wait for disconnection or user break
+            while True:
+                # If physically disconnected, the library may no longer be is_connected
+                if not async_connection.is_connected():
+                    logger.warning({"event": "async_disconnected", "message": "OBD lost connection."})
+                    break
+                time.sleep(5)
 
-    logger.info({"event": "finished_obd_test"})
+            # 5) Clean up
+            async_connection.stop()
+            async_connection.close()
+            logger.info({"event": "async_connection_stopped"})
+
+            # Try reconnecting after a delay
+            logger.info({"event": "attempt_reconnect", "message": "Will attempt to reconnect soon..."})
+            time.sleep(5)
+
+        except KeyboardInterrupt:
+            # If the user explicitly kills the container/script
+            logger.info({"event": "shutdown_requested", "message": "Ctrl+C received, exiting."})
+            break
+        except Exception as e:
+            logger.exception({"event": "unhandled_exception", "error": str(e)})
+            # Try again after a delay
+            time.sleep(5)
+            # continue the loop to keep trying
+
+    logger.info({"event": "finished_obd_test", "message": "Exiting main loop."})
 
 if __name__ == "__main__":
     main()
