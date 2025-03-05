@@ -2,35 +2,9 @@
 
 import time
 import logging
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 import obd
 from obd import commands
-
-###############################################################################
-# CUSTOM JSON FORMATTER
-###############################################################################
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
-    """
-    A custom JsonFormatter that removes empty `message`, flattens Python logging fields,
-    and renames the timestamp key to `timestamp`.
-    """
-
-    def add_fields(self, log_record, record, message_dict):
-        # Let the base class populate the default fields
-        super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
-
-        # Remove empty "message" if present
-        if "message" in log_record and not log_record["message"]:
-            del log_record["message"]
-
-        # Rename "asctime" to "timestamp"
-        if "asctime" in log_record:
-            log_record["timestamp"] = log_record.pop("asctime")
-
-        # You can remove other unwanted fields here, for example:
-        for field in ["exc_info", "exc_text", "stack_info", "args"]:
-            if field in log_record:
-                del log_record[field]
 
 ###############################################################################
 # CONFIGURE LOGGER (Single-Line JSON)
@@ -39,63 +13,30 @@ logger = logging.getLogger("obd_logger")
 logger.setLevel(logging.INFO)
 
 file_handler = logging.FileHandler("app.log")
-formatter = CustomJsonFormatter()
+formatter = JsonFormatter()  # from pythonjsonlogger.json
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
-
-###############################################################################
-# HELPER: PARSE OBD VALUE
-###############################################################################
-def parse_obd_value(value_obj):
-    """
-    Returns a tuple (numeric_value, unit_string) if possible,
-    otherwise returns (str(value_obj), None).
-    Example:
-        If value_obj.to_tuple() -> (10.588235294117647, [["percent", 1]]),
-        we return (10.588235294117647, "percent").
-    """
-    if not value_obj or value_obj.is_null():
-        return (None, None)
-
-    # Try to parse numeric + units from the OBD response
-    if hasattr(value_obj, "to_tuple"):
-        val_tuple = value_obj.to_tuple()  # e.g. (10.58, [["percent", 1]])
-        numeric_value = val_tuple[0]
-        unit_str = None
-        # Some OBD values store units in a structure like [["percent", 1]]
-        if len(val_tuple) > 1 and val_tuple[1]:
-            # val_tuple[1] might be something like [["percent", 1]]
-            # so get the first item if it exists
-            if len(val_tuple[1]) > 0 and len(val_tuple[1][0]) > 0:
-                unit_str = val_tuple[1][0][0]
-        return (numeric_value, unit_str)
-    else:
-        # Fallback: just convert to string
-        return (str(value_obj), None)
 
 ###############################################################################
 # ASYNC CALLBACK
 ###############################################################################
 def async_callback(response):
     """
-    Logs each new async reading in flattened JSON form.
-    If response is null, logs None.
+    Logs each new async reading. If the response is null, logs None.
     """
     cmd = response.command.name if response.command else "UnknownCommand"
     if response.is_null():
         logger.info({"event": "async_snapshot", "command": cmd, "value": None})
         return
 
-    numeric_value, unit_str = parse_obd_value(response.value)
-    # Log a flattened JSON record
-    rec = {
-        "event": "async_snapshot",
-        "command": cmd,
-        "value": numeric_value
-    }
-    if unit_str:
-        rec["unit"] = unit_str
-    logger.info(rec)
+    val = response.value
+    # If numeric, val may support .to_tuple()
+    if hasattr(val, "to_tuple"):
+        val = val.to_tuple()
+    else:
+        val = str(val)
+
+    logger.info({"event": "async_snapshot", "command": cmd, "value": val})
 
 ###############################################################################
 # MAIN SCRIPT
@@ -124,20 +65,24 @@ def main():
         logger.error({"event": "connection_failure", "message": "Could not connect (static)"})
         return
 
-    # Flatten all static data into a single record
-    static_record = {"event": "static_obd_snapshot"}
+    static_data = {}
+    # Use membership check: if cmd in connection.supported_commands
     for cmd in static_commands:
-        cmd_name = cmd.name
         if cmd in connection.supported_commands:
             resp = connection.query(cmd)
-            val, unit_str = parse_obd_value(resp.value)
-            static_record[cmd_name] = val
-            if unit_str:
-                static_record[cmd_name + "_unit"] = unit_str
+            if resp.is_null():
+                static_data[cmd.name] = None
+            else:
+                val = resp.value
+                if hasattr(val, "to_tuple"):
+                    val = val.to_tuple()
+                else:
+                    val = str(val)
+                static_data[cmd.name] = val
         else:
-            static_record[cmd_name] = None
+            static_data[cmd.name] = None
 
-    logger.info(static_record)
+    logger.info({"event": "static_obd_snapshot", "data": static_data})
 
     connection.close()
     time.sleep(0.03125)  # Give adapter a moment to reset
@@ -155,6 +100,7 @@ def main():
         commands.THROTTLE_POS
     ]
 
+    # Create Async OBD connection with recommended parameters
     async_connection = obd.Async(
         portstr="/dev/ttyUSB0",
         fast=False,
