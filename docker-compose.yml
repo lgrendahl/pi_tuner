@@ -1,0 +1,57 @@
+services:
+
+  # 1) The OBD Python App
+  obd-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: obd_app
+
+    # So the Python code can see the OBD device on the Pi
+    # Adjust device path if your OBD is at /dev/ttyUSB1 or /dev/rfcomm0, etc.
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+
+    # If you need privileged access to the serial device, uncomment:
+    # privileged: true
+
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=my-token
+      - INFLUX_ORG=my-org
+      - INFLUX_BUCKET=obd_data
+      # If your script relies on other env vars, define them here
+
+    # Ensure the app starts after Influx is ready
+    depends_on:
+      - influxdb
+      - grafana
+
+  # 2) InfluxDB 2.x
+  influxdb:
+    image: influxdb:2.6
+    container_name: influxdb
+    ports:
+      - "8086:8086"   # Expose Influx on host:port if desired
+    environment:
+      # Setup the initial user, org, bucket, token
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=my-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=obd_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-token
+
+  # 3) Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    # We expose Grafana's web UI on port 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - influxdb
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Additional Grafana config as needed

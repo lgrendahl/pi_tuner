@@ -4,3 +4,4 @@ pandas ~= 2.2.3  # Simplifies data manipulation, logging, and CSV generation for
 numpy < 1.24  # Adds efficient array manipulation for calculations or advanced analytics.
 requests ~= 2.32.3  # Allows making HTTP requests if you plan to send data to external services or APIs.
 python-json-logger ~= 3.2.1  # Enables easy JSON output for logs, perfect for Splunk ingestion.
+influxdb-client ~= 1.48.0  # Python client library for InfluxDB.
