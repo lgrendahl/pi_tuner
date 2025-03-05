@@ -1,5 +1,5 @@
-# Use a more feature-rich Python base image
-FROM python:3.13.1-bookworm
+# Use Python 3.11 instead of 3.13
+FROM python:3.11-bookworm
 
 # 1) Create a non-root user with UID=1000 and GID=1000
 RUN groupadd --gid 1000 obd-user && \
@@ -31,5 +31,5 @@ USER obd-user
 # 7) Expose the Flask port (example: 1337)
 EXPOSE 1337
 
-# 8) By default, run your Flask app (the code itself can be mounted at runtime)
+# 8) By default, run your Flask app (the code can be mounted at runtime)
 CMD ["python", "run.py"]
