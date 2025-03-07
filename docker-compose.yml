@@ -31,15 +31,17 @@ services:
     image: influxdb:2.6
     container_name: influxdb
     ports:
-      - "8086:8086"   # Expose Influx on host:port if desired
+      - "8086:8086"
     environment:
-      # Setup the initial user, org, bucket, token
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
       - DOCKER_INFLUXDB_INIT_ORG=my-org
       - DOCKER_INFLUXDB_INIT_BUCKET=obd_data
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2    # Add persistent storage for data
+      - influxdb-config:/etc/influxdb2      # Add persistent storage for config
 
   # 3) Grafana
   grafana:
@@ -53,4 +55,7 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      # Additional Grafana config as needed
+
+volumes:
+  influxdb-data:    # Define named volume for InfluxDB data
+  influxdb-config:  # Define named volume for InfluxDB configuration
