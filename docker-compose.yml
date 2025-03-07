@@ -57,8 +57,8 @@ services:
       - GF_FEATURE_TOGGLES_ENABLE=live
       - GF_LIVE_MAX_CONNECTIONS=100
       - GF_LIVE_ALLOWED_ORIGINS="*"
+      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s
     volumes:
-      - ./grafana/config:/etc/grafana                # Mount the entire config directory
       - grafana-data:/var/lib/grafana
 
 volumes:
