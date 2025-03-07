@@ -54,9 +54,12 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_FEATURE_TOGGLES_ENABLE=live    # Enable live feature
+      - GF_LIVE_MAX_CONNECTIONS=100       # Configure live connections
+      - GF_LIVE_ALLOWED_ORIGINS="*"       # Allow all origins for live updates
     volumes:
-      - ./grafana.ini:/etc/grafana/grafana.ini:ro  # Mount custom config file
-      - grafana-data:/var/lib/grafana              # Add persistent storage
+      - ./grafana.ini:/etc/grafana/grafana.ini:ro
+      - grafana-data:/var/lib/grafana
 
 volumes:
   influxdb-data:    # Define named volume for InfluxDB data
