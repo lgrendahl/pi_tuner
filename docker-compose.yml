@@ -54,11 +54,11 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_FEATURE_TOGGLES_ENABLE=live    # Enable live feature
-      - GF_LIVE_MAX_CONNECTIONS=100       # Configure live connections
-      - GF_LIVE_ALLOWED_ORIGINS="*"       # Allow all origins for live updates
+      - GF_FEATURE_TOGGLES_ENABLE=live
+      - GF_LIVE_MAX_CONNECTIONS=100
+      - GF_LIVE_ALLOWED_ORIGINS="*"
     volumes:
-      - ./grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./grafana/config:/etc/grafana                # Mount the entire config directory
       - grafana-data:/var/lib/grafana
 
 volumes:
