@@ -47,7 +47,6 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
-    # We expose Grafana's web UI on port 3000
     ports:
       - "3000:3000"
     depends_on:
@@ -55,7 +54,11 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana.ini:/etc/grafana/grafana.ini:ro  # Mount custom config file
+      - grafana-data:/var/lib/grafana              # Add persistent storage
 
 volumes:
   influxdb-data:    # Define named volume for InfluxDB data
   influxdb-config:  # Define named volume for InfluxDB configuration
+  grafana-data:
